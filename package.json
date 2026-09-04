@@ -1,0 +1,27 @@
+{
+  "name": "playwright-website-tester",
+  "version": "1.0.0",
+  "description": "Easy-to-use Playwright website testing tool with visual dashboard and beginner-friendly test suites.",
+  "main": "dashboard/server.js",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:ui": "npx playwright test --ui",
+    "test:report": "npx playwright show-report",
+    "dashboard": "node dashboard/server.js"
+  },
+  "keywords": [
+    "playwright",
+    "testing",
+    "e2e",
+    "website-tester"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0"
+  }
+}
