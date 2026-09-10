@@ -141,7 +141,17 @@ function startJob(job) {
     console.log(`[INFO] [job ${job.id}] Ignoring "headed" request — this host has no display. Running headless (see the session video for a visual record).`);
   }
   const slowMoFlag = (job.slowMo && !isHeadlessOnlyHost) ? '--headed' : '';
-  const command = `npx playwright test ${testFile} --project="Desktop Chrome" ${slowMoFlag}`;
+
+  // "Desktop Chrome" (playwright.config.js) uses channel: 'chrome' — that means "find a real,
+  // separately-installed Google Chrome on this system," not Playwright's own bundled browser.
+  // That happens to exist on a normal desktop (hence it working locally), but a server built
+  // from Playwright's own Docker image only ships Playwright's bundled Chromium/Firefox/WebKit
+  // — no real system Chrome. On a host without one, that project fails at browser launch,
+  // before any test code runs, regardless of headed/headless. The "Chromium" project uses
+  // Playwright's bundled browser instead, which is guaranteed present wherever Playwright
+  // itself is installed, so the dashboard always uses that rather than depend on the host
+  // happening to have a real Chrome install.
+  const command = `npx playwright test ${testFile} --project="Chromium" ${slowMoFlag}`;
   console.log(`[INFO] [job ${job.id}] Executing: TARGET_URL=${job.targetUrl} ${command}`);
 
   exec(command, {
