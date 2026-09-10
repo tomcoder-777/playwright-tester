@@ -24,6 +24,12 @@ const rootDir = path.join(__dirname, '..');
 const runsRoot = path.join(rootDir, 'runs');
 if (!fs.existsSync(runsRoot)) fs.mkdirSync(runsRoot, { recursive: true });
 
+// "Headed" mode needs a real display, which a hosted container doesn't have. Render sets
+// RENDER=true automatically; FORCE_HEADLESS lets any other headless host opt in explicitly.
+// Shared between the job runner (to ignore a headed request safely) and /api/config (so the
+// frontend can hide the toggle entirely instead of showing a control that silently no-ops).
+const IS_HEADLESS_ONLY_HOST = process.env.RENDER === 'true' || process.env.FORCE_HEADLESS === 'true';
+
 // ---------------------------------------------------------------------------------------
 // Authentication — a single shared username/password gate (HTTP Basic Auth). Good enough
 // for "myself and a few trusted people" hosting; not a multi-tenant account system. If the
@@ -130,17 +136,12 @@ function startJob(job) {
   else if (job.testSuite === 'interactive') testFile = 'tests/03_interactive_elements.spec.js';
   else if (job.testSuite === 'visual') testFile = 'tests/04_responsive_and_visual.spec.js';
 
-  // "Headed" mode launches a real, visible browser window — that only works on a machine
-  // with an actual display. Hosted servers (Render, and most other platforms) are headless
-  // containers with no display at all, so honoring this on a host would crash the whole
-  // audit before it even starts. Render sets RENDER=true automatically; FORCE_HEADLESS lets
-  // any other headless host opt in explicitly. Session video recording already gives a
-  // visual record of what happened, so nothing is lost by ignoring the toggle here.
-  const isHeadlessOnlyHost = process.env.RENDER === 'true' || process.env.FORCE_HEADLESS === 'true';
-  if (job.slowMo && isHeadlessOnlyHost) {
+  // The frontend hides the headed-mode toggle on a headless-only host (see /api/config), but
+  // still guard against it server-side too (a stale page, a direct API call, etc.).
+  if (job.slowMo && IS_HEADLESS_ONLY_HOST) {
     console.log(`[INFO] [job ${job.id}] Ignoring "headed" request — this host has no display. Running headless (see the session video for a visual record).`);
   }
-  const slowMoFlag = (job.slowMo && !isHeadlessOnlyHost) ? '--headed' : '';
+  const slowMoFlag = (job.slowMo && !IS_HEADLESS_ONLY_HOST) ? '--headed' : '';
 
   // "Desktop Chrome" (playwright.config.js) uses channel: 'chrome' — that means "find a real,
   // separately-installed Google Chrome on this system," not Playwright's own bundled browser.
@@ -216,6 +217,12 @@ function processQueue() {
 // ---------------------------------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/runs', express.static(runsRoot));
+
+// Lets the frontend adapt to what this host can actually do (e.g. hide the headed-mode
+// toggle on a headless-only server) instead of showing a control that silently no-ops.
+app.get('/api/config', (req, res) => {
+  res.json({ headedModeAvailable: !IS_HEADLESS_ONLY_HOST });
+});
 
 app.post('/api/run-test', async (req, res) => {
   const { targetUrl, testSuite, slowMo } = req.body;

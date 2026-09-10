@@ -14,6 +14,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnShowHumanReport = document.getElementById('btnShowHumanReport');
   const btnShowDevLogs = document.getElementById('btnShowDevLogs');
 
+  // Hide "Headed Browser Execution Mode" on a host that can't actually support it (no
+  // display) — showing a toggle that silently does nothing is more confusing than useful.
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    if (!cfg.headedModeAvailable) {
+      document.getElementById('headedModeGroup').style.display = 'none';
+      document.getElementById('headedModeUnavailableNote').style.display = 'block';
+    }
+  }).catch(() => {});
+
   btnShowHumanReport.addEventListener('click', () => {
     btnShowHumanReport.classList.add('active');
     btnShowDevLogs.classList.remove('active');

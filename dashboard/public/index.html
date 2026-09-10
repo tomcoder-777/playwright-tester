@@ -112,13 +112,18 @@
             </div>
           </div>
 
-          <div class="toggle-group">
+          <div class="toggle-group" id="headedModeGroup">
             <label class="switch-label">
               <input type="checkbox" id="slowMoToggle">
               <span class="slider"></span>
               <span class="toggle-text">Headed Browser Execution Mode</span>
             </label>
           </div>
+          <p class="field-note" id="headedModeUnavailableNote" style="display:none;">
+            Headed mode shows a real, visible browser window while it audits — that only works
+            when running this locally on your own machine. This server has no display, so it's
+            hidden here (audits still run normally, just without a visible window).
+          </p>
 
           <button type="submit" class="btn-run" id="runBtn">
             Execute Black-Box Audit
