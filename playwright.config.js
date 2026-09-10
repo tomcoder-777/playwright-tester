@@ -14,13 +14,9 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  // Overridable per invocation (PW_HTML_REPORT_DIR / PW_OUTPUT_DIR) so the hosted dashboard
-  // can point each concurrent audit job at its own isolated directory instead of every job
-  // overwriting the same shared report/output folders.
-  outputDir: process.env.PW_OUTPUT_DIR || 'test-results',
   reporter: [
     ['list'],
-    ['html', { outputFolder: process.env.PW_HTML_REPORT_DIR || 'playwright-report', open: 'never' }]
+    ['html', { outputFolder: 'playwright-report', open: 'never' }]
   ],
   use: {
     baseURL: targetUrl,

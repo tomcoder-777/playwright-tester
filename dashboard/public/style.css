@@ -301,13 +301,6 @@ body {
   padding: 0.4rem 0;
 }
 
-.field-note {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-  padding: 0.4rem 0 0.2rem;
-}
-
 .switch-label {
   display: flex;
   align-items: center;
@@ -770,94 +763,6 @@ body {
   padding: 0.75rem 1rem;
   margin-top: 0.8rem;
   font-size: 0.82rem;
-}
-
-/* Plain-language report: a friendly headline, an issue card that leads with the
-   what/why/what-to-do in everyday words, and technical detail tucked behind a toggle. */
-.plain-headline-card {
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  margin-bottom: 1rem;
-  font-size: 1rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.plain-headline-card.light-green { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.35); color: #34d399; }
-.plain-headline-card.light-yellow { background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; }
-.plain-headline-card.light-red { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; }
-
-.plain-note-card {
-  background: rgba(148, 163, 184, 0.08);
-  border: 1px solid var(--card-border);
-  border-left: 4px solid #64748b;
-  border-radius: 6px;
-  padding: 0.7rem 1rem;
-  margin-bottom: 1rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.plain-issue-card {
-  background: rgba(15, 23, 42, 0.4);
-  border: 1px solid var(--card-border);
-  border-left: 4px solid #64748b;
-  border-radius: 6px;
-  padding: 0.85rem 1rem;
-  margin-bottom: 0.6rem;
-}
-
-.plain-issue-card.sev-critical, .plain-issue-card.sev-high { border-left-color: #ef4444; }
-.plain-issue-card.sev-medium { border-left-color: #f59e0b; }
-.plain-issue-card.sev-low { border-left-color: #64748b; }
-.plain-issue-card.unverifiable { border-left-color: #475569; opacity: 0.85; }
-
-.plain-issue-summary {
-  font-size: 0.92rem;
-  font-weight: 600;
-  color: var(--text-main);
-  margin-bottom: 0.35rem;
-}
-
-.plain-issue-body p {
-  font-size: 0.84rem;
-  color: var(--text-muted);
-  margin-top: 0.25rem;
-  line-height: 1.5;
-}
-
-.plain-issue-body strong { color: var(--text-main); font-weight: 600; }
-
-.severity-pill {
-  display: inline-block;
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  margin-right: 0.5rem;
-  vertical-align: middle;
-}
-
-.severity-pill.sev-critical, .severity-pill.sev-high { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-.severity-pill.sev-medium { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
-.severity-pill.sev-low { background: rgba(100, 116, 139, 0.2); color: #94a3b8; }
-
-.issue-tech-details {
-  margin-top: 0.6rem;
-  padding: 0.5rem 0.75rem;
-}
-
-.issue-tech-details summary {
-  font-size: 0.75rem;
-}
-
-.issue-tech-details .tech-details-list {
-  font-size: 0.72rem;
-  max-height: none;
 }
 
 .tech-details-box summary {

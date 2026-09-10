@@ -112,18 +112,13 @@
             </div>
           </div>
 
-          <div class="toggle-group" id="headedModeGroup">
+          <div class="toggle-group">
             <label class="switch-label">
               <input type="checkbox" id="slowMoToggle">
               <span class="slider"></span>
               <span class="toggle-text">Headed Browser Execution Mode</span>
             </label>
           </div>
-          <p class="field-note" id="headedModeUnavailableNote" style="display:none;">
-            Headed mode shows a real, visible browser window while it audits — that only works
-            when running this locally on your own machine. This server has no display, so it's
-            hidden here (audits still run normally, just without a visible window).
-          </p>
 
           <button type="submit" class="btn-run" id="runBtn">
             Execute Black-Box Audit
@@ -173,7 +168,7 @@
           <div class="score-lbl">Health Index</div>
         </div>
         <div class="score-card">
-          <div class="score-val" id="scoreSpeed"><span id="speedNum">0</span><span id="speedUnit">ms</span></div>
+          <div class="score-val" id="scoreSpeed"><span id="speedNum">0</span>ms</div>
           <div class="score-lbl">DOM Response Time</div>
         </div>
         <div class="score-card">

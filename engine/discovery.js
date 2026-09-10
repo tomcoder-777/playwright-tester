@@ -5,7 +5,6 @@
  */
 const config = require('./config');
 const { classifyElementSafety } = require('./safety_classifier');
-const { waitForHydration } = require('./hydration_wait');
 
 // Extracts same-origin, in-scope hrefs from raw HTML via lightweight regex parsing.
 // Used for depth-2 crawling without spending a browser navigation per page.
@@ -84,7 +83,6 @@ async function discoverPageInventory(page, targetUrl, requestContext) {
     interactiveElements: [],
     assets: [],
     forms: [],
-    nonFunctionalLinks: [],
     timings: timings,
     traceLogs: traceLogs,
     discoveryDurationMs: 0
@@ -93,57 +91,24 @@ async function discoverPageInventory(page, targetUrl, requestContext) {
   try {
     const targetOrigin = new URL(targetUrl).origin;
 
-    // 0. Operation: Wait for client-side hydration before scanning the DOM — otherwise
-    // JS-rendered sites (React/Vue/Next.js) get scanned while still an empty shell.
-    const tHydrate = Date.now();
-    await waitForHydration(page);
-    const dHydrate = Date.now() - tHydrate;
-    timings['Hydration Wait'] = dHydrate;
-    traceLogs.push(`Hydration Wait — waited ${dHydrate}ms for client-side rendered content to appear`);
-
     // 1. Operation: Discover Links
-    // Query ALL anchors, not just a[href] — an <a> with no href attribute (or a bare "#"
-    // placeholder) renders as a normal link visually but goes nowhere when clicked. That
-    // class of bug is invisible to a selector that requires href to exist, so it's tracked
-    // separately below instead of silently disappearing from discovery.
     const t1 = Date.now();
     const rawLinks = await page.evaluate(() => {
-      const anchors = Array.from(document.querySelectorAll('a'));
-      return anchors.map((a, idx) => {
-        // Stamped unconditionally (cheap) so any placeholder anchor found below can be
-        // re-selected later to test-click it and see whether a JS handler actually does anything.
-        a.setAttribute('data-qa-link-idx', String(idx));
-        return {
-          qaLinkIndex: idx,
-          text: a.innerText.trim(),
-          hasHref: a.hasAttribute('href'),
-          href: a.getAttribute('href'),
-          fullUrl: a.href,
-          ariaLabel: a.getAttribute('aria-label') || ''
-        };
-      });
+      const anchors = Array.from(document.querySelectorAll('a[href]'));
+      return anchors.map(a => ({
+        text: a.innerText.trim(),
+        href: a.getAttribute('href'),
+        fullUrl: a.href,
+        ariaLabel: a.getAttribute('aria-label') || ''
+      }));
     });
 
     const uniqueUrls = new Set();
     uniqueUrls.add(targetUrl);
 
     for (const link of rawLinks) {
-      const hrefRaw = (link.href || '').trim().toLowerCase();
-      const isPlaceholder = !link.hasHref || hrefRaw === '' || hrefRaw === '#' ||
-        hrefRaw === 'javascript:void(0)' || hrefRaw === 'javascript:;';
-
-      if (isPlaceholder) {
-        inventory.nonFunctionalLinks.push({
-          qaLinkIndex: link.qaLinkIndex,
-          text: link.text || link.ariaLabel || '(no visible text)',
-          ariaLabel: link.ariaLabel,
-          reason: !link.hasHref ? 'Anchor tag has no href attribute' : `Anchor href is a non-navigating placeholder ("${link.href}")`
-        });
-        continue;
-      }
-
       try {
-        if (link.fullUrl.startsWith('javascript:') || link.fullUrl.startsWith('mailto:')) continue;
+        if (!link.fullUrl || link.fullUrl.startsWith('javascript:') || link.fullUrl.startsWith('mailto:')) continue;
         const parsed = new URL(link.fullUrl);
         
         // Scope to same origin by default
@@ -167,7 +132,7 @@ async function discoverPageInventory(page, targetUrl, requestContext) {
     }
     const d1 = Date.now() - t1;
     timings['Discover Links'] = d1;
-    traceLogs.push(`Discover Links — ${rawLinks.length} anchors found, ${inventory.pages.length} unique in-scope links, ${inventory.nonFunctionalLinks.length} non-functional (no destination) — ${d1}ms`);
+    traceLogs.push(`Discover Links — ${rawLinks.length} anchors found, ${inventory.pages.length} unique in-scope links — ${d1}ms`);
 
     // 1b. Operation: Deep Crawl (Depth 2) — expand a sample of discovered pages via HTTP fetch
     const tDeep = Date.now();

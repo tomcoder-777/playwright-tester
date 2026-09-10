@@ -18,8 +18,10 @@
   "author": "Antigravity",
   "license": "MIT",
   "dependencies": {
-    "@playwright/test": "1.61.1",
     "cors": "^2.8.5",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0"
   }
 }

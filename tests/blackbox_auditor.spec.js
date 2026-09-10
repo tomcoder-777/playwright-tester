@@ -8,13 +8,12 @@ const { discoverPageInventory } = require('../engine/discovery');
 const { auditLinksFast } = require('../engine/navigation_auditor');
 const { auditAssets } = require('../engine/asset_auditor');
 const { auditForms } = require('../engine/form_auditor');
-const { auditInteractions, verifyNonFunctionalLinks } = require('../engine/interaction_auditor');
+const { auditInteractions } = require('../engine/interaction_auditor');
 const { auditResponsiveLayout } = require('../engine/responsive_auditor');
 const ConsoleNetworkMonitor = require('../engine/console_network_monitor');
 const { auditAccessibility } = require('../engine/accessibility_auditor');
 const { processFailureDependencies } = require('../engine/failure_correlator');
 const { generateQAReport } = require('../engine/report_generator');
-const { getSnapshotDir, getSnapshotUrlPrefix } = require('../engine/paths');
 
 test.describe('Black-Box Website QA Engine', () => {
 
@@ -49,7 +48,7 @@ test.describe('Black-Box Website QA Engine', () => {
       });
 
       // Write JSON Report Artifact
-      const snapshotDir = getSnapshotDir();
+      const snapshotDir = path.join(__dirname, '..', 'snapshots');
       if (!fs.existsSync(snapshotDir)) fs.mkdirSync(snapshotDir, { recursive: true });
       fs.writeFileSync(path.join(snapshotDir, 'qa_report.json'), JSON.stringify(qaReport, null, 2));
 
@@ -59,30 +58,7 @@ test.describe('Black-Box Website QA Engine', () => {
 
     // Stage 3: Discovery & Inventory
     inventory = await discoverPageInventory(page, targetUrl, request);
-    console.log(`[DISCOVERY] Found ${inventory.pages.length} reachable pages, ${inventory.interactiveElements.length} controls, ${inventory.assets.length} assets, ${inventory.forms.length} forms, ${inventory.nonFunctionalLinks.length} non-functional links in ${inventory.discoveryDurationMs}ms`);
-
-    let linkVerification = { confirmedBroken: [], confirmedHandledByJs: [], traceLogs: [] };
-    if (inventory.nonFunctionalLinks.length > 0) {
-      // Don't just flag these as "worth checking" — actually click each one and see whether
-      // a JS handler makes it work. Only the ones with zero observable effect are real bugs.
-      linkVerification = await verifyNonFunctionalLinks(page, inventory.nonFunctionalLinks, monitor);
-
-      if (linkVerification.confirmedBroken.length > 0) {
-        auditResults.push({
-          testName: 'Non-Functional Link Audit',
-          status: 'FAIL',
-          reason: `Confirmed ${linkVerification.confirmedBroken.length} link-styled element(s) that do nothing when clicked`,
-          evidence: linkVerification.confirmedBroken.map(l => `"${l.text}" — ${l.effect}`).join('; ')
-        });
-      } else if (inventory.nonFunctionalLinks.length > 0) {
-        auditResults.push({
-          testName: 'Non-Functional Link Audit',
-          status: 'PASS',
-          reason: `${inventory.nonFunctionalLinks.length} link-styled element(s) had no href attribute, but clicking each confirmed a working JavaScript handler`,
-          evidence: linkVerification.confirmedHandledByJs.map(l => `"${l.text}" — ${l.effect}`).join('; ')
-        });
-      }
-    }
+    console.log(`[DISCOVERY] Found ${inventory.pages.length} reachable pages, ${inventory.interactiveElements.length} controls, ${inventory.assets.length} assets, ${inventory.forms.length} forms in ${inventory.discoveryDurationMs}ms`);
 
     // Stage 4: Navigation Link Audit (Fast HTTP with Deduplication & Concurrency)
     linkAudit = await auditLinksFast(request, inventory.pages, targetUrl);
@@ -99,16 +75,6 @@ test.describe('Black-Box Website QA Engine', () => {
         status: 'WARNING',
         reason: `Detected ${linkAudit.restrictedLinks.length} access-restricted link(s) (HTTP 401/403)`,
         evidence: linkAudit.restrictedLinks.map(b => `${b.url} (HTTP ${b.status})`).join('; ')
-      });
-    } else if (linkAudit.unverifiableLinks.length > 0) {
-      // No confirmed breakage — just links we couldn't get a definite answer on, even after
-      // retrying. Most often caused by an unstable connection during the test itself, so
-      // this is a soft warning rather than a failure.
-      auditResults.push({
-        testName: 'Asset & Link Audit',
-        status: 'WARNING',
-        reason: `Could not verify ${linkAudit.unverifiableLinks.length} link(s) — connection kept timing out even after a retry`,
-        evidence: linkAudit.unverifiableLinks.map(b => `${b.url} (${b.statusText})`).join('; ')
       });
     } else {
       auditResults.push({
@@ -127,13 +93,6 @@ test.describe('Black-Box Website QA Engine', () => {
         status: 'FAIL',
         reason: `Detected ${assetAuditResult.brokenImages.length} broken image asset(s)`,
         evidence: assetAuditResult.brokenImages.map(img => `${img.src} (${img.details})`).join('; ')
-      });
-    } else if (assetAuditResult.unverifiableImages.length > 0) {
-      auditResults.push({
-        testName: 'Image Integrity',
-        status: 'WARNING',
-        reason: `Could not verify ${assetAuditResult.unverifiableImages.length} image(s) — connection kept timing out even after a retry`,
-        evidence: assetAuditResult.unverifiableImages.map(img => `${img.src} (${img.details})`).join('; ')
       });
     } else {
       auditResults.push({
@@ -205,13 +164,12 @@ test.describe('Black-Box Website QA Engine', () => {
     const correlation = processFailureDependencies(preflight, auditResults);
     
     // Collect screenshots
-    const snapshotDir = getSnapshotDir();
-    const snapshotUrlPrefix = getSnapshotUrlPrefix();
+    const snapshotDir = path.join(__dirname, '..', 'snapshots');
     let screenshots = [];
     if (fs.existsSync(snapshotDir)) {
       screenshots = fs.readdirSync(snapshotDir)
         .filter(f => f.endsWith('.png'))
-        .map(f => `${snapshotUrlPrefix}/${f}`);
+        .map(f => `/snapshots/${f}`);
     }
 
     const totalRuntimeMs = Date.now() - pipelineStartTime;
@@ -221,7 +179,6 @@ test.describe('Black-Box Website QA Engine', () => {
       assetAudit: assetAuditResult,
       formAudit: formAuditResult,
       interactionAudit: interactionAuditResult,
-      linkVerification: linkVerification,
       responsiveAudit: responsiveAuditResult,
       accessibilityObservations: accessibilityObservations,
       screenshots: screenshots,

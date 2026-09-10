@@ -19,15 +19,6 @@ module.exports = {
     fallbackWaitUntil: 'commit'
   },
 
-  // Client-Side Render Hydration Wait — many modern sites (React/Vue/Next.js) send a near-empty
-  // HTML shell and inject real content via JS after `domcontentloaded` fires. Without this, the
-  // discovery/interaction/responsive stages would scan an empty page. Best-effort: never throws,
-  // just gives the page a bounded window to render before inventory/screenshot stages run.
-  hydrationWait: {
-    enabled: true,
-    timeoutMs: 8000
-  },
-
   // Asset & Link Auditing Performance Options
   assetAuditor: {
     concurrency: 8,
