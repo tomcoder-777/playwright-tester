@@ -5,6 +5,11 @@
  * and Collapsible Technical Execution Trace Details.
  */
 const config = require('./config');
+const { explainIssue, buildPlainSummary, isUnverifiable } = require('./plain_language');
+
+function cleanLabel(text) {
+  return (text || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
 
 function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}, auditArtifacts = {}) {
   const issues = [];
@@ -13,8 +18,11 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
 
   // 1. Process Preflight Failures into Standardized Issues
   if (!preflight.success) {
+    const isDnsFailure = /domain could not be found/i.test(preflight.errorMessage || '');
+    const category = isDnsFailure ? 'dns_failure' : (preflight.connectionUncertain ? 'navigation_failure_uncertain' : 'navigation_failure');
     issues.push({
       issue: 'Primary Endpoint Navigation Failure',
+      category,
       severity: 'Critical',
       evidence: `Browser-observed HTTP status: ${preflight.httpStatus || '0'}. Navigation duration: ${(preflight.navigationDurationMs / 1000).toFixed(1)}s. ${preflight.errorMessage}`,
       rootCause: `Endpoint failed to respond cleanly within navigation timeout. Error: ${preflight.errorMessage}`,
@@ -29,6 +37,7 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     for (const req of preflight.failedNetworkRequests.slice(0, 5)) {
       issues.push({
         issue: `Failed Network Resource Request (${req.status})`,
+        category: 'failed_network_request',
         severity: req.status >= 500 ? 'High' : 'Medium',
         evidence: `Browser observed ${req.method} ${req.url} returning HTTP ${req.status} ${req.statusText}`,
         rootCause: req.status >= 500 ? 'Server-side application error' : 'Resource file missing or unaccessible',
@@ -44,6 +53,7 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     for (const exc of preflight.uncaughtExceptions.slice(0, 3)) {
       issues.push({
         issue: 'Uncaught JavaScript Runtime Exception',
+        category: 'uncaught_exception',
         severity: 'High',
         evidence: `Uncaught exception in browser runtime: "${exc.message}"`,
         rootCause: 'Frontend application code threw an unhandled JavaScript exception.',
@@ -54,11 +64,12 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     }
   }
 
-  // 4. Process Asset & Image Failures
+  // 4. Process Asset & Image Failures (confirmed — got a real HTTP error response)
   if (auditArtifacts.assetAudit && auditArtifacts.assetAudit.brokenImages) {
     for (const img of auditArtifacts.assetAudit.brokenImages) {
       issues.push({
         issue: 'Broken Image Asset',
+        category: 'broken_image',
         severity: 'Medium',
         evidence: `Browser observed broken image tag pointing to: "${img.src}". Details: ${img.details}`,
         rootCause: 'Image file is missing, path is malformed, or server returned HTTP 404/500.',
@@ -69,11 +80,29 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     }
   }
 
+  // 4aa. Process Unverifiable Images — no HTTP response at all after retries. Ambiguous:
+  // could be a real problem, could just as easily be an unstable connection during testing.
+  if (auditArtifacts.assetAudit && auditArtifacts.assetAudit.unverifiableImages) {
+    for (const img of auditArtifacts.assetAudit.unverifiableImages.slice(0, 10)) {
+      issues.push({
+        issue: 'Image Could Not Be Verified',
+        category: 'unverifiable_image',
+        severity: 'Low',
+        evidence: `Could not get any response for image "${img.src}" after 2 attempts. Details: ${img.details}`,
+        rootCause: 'No HTTP response was received — this can indicate a broken resource, or an unstable connection on the machine running this test.',
+        affectedArea: img.src,
+        recommendedAction: 'Re-run the audit on a more stable connection. If it still cannot be verified, check the image manually.',
+        evidenceFiles: []
+      });
+    }
+  }
+
   // 4b. Process Missing Alt Text (Accessibility)
   if (auditArtifacts.assetAudit && auditArtifacts.assetAudit.missingAltAccessibilityIssues) {
     for (const alt of auditArtifacts.assetAudit.missingAltAccessibilityIssues.slice(0, 10)) {
       issues.push({
         issue: 'Image Missing Alt Text',
+        category: 'missing_alt',
         severity: 'Low',
         evidence: `Image "${alt.src}" has no alt attribute.`,
         rootCause: alt.details,
@@ -84,11 +113,55 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     }
   }
 
-  // 4c. Process Broken Links (Navigation Audit)
+  // 4bb. Process Non-Functional Links (anchor with no navigable destination)
+  // Prefer the click-verification results when available — they distinguish a link that's
+  // genuinely dead (confirmed: clicking does nothing) from one with no href but a working
+  // JS click handler (confirmed: clicking navigates/opens a modal/opens a tab). Anything
+  // outside the tested set (e.g. verification didn't run) falls back to the static heuristic.
+  if (inventory.nonFunctionalLinks && inventory.nonFunctionalLinks.length > 0) {
+    const verification = auditArtifacts.linkVerification || { confirmedBroken: [], confirmedHandledByJs: [] };
+    const testedIndexes = new Set([
+      ...verification.confirmedBroken.map(l => l.qaLinkIndex),
+      ...verification.confirmedHandledByJs.map(l => l.qaLinkIndex)
+    ]);
+
+    for (const link of verification.confirmedBroken.slice(0, 10)) {
+      issues.push({
+        issue: 'Non-Functional Link (Confirmed)',
+        category: 'non_functional_link_confirmed',
+        linkLabel: cleanLabel(link.text),
+        severity: 'High',
+        evidence: `Link-styled element with text "${link.text}" — ${link.reason}. Verified by automated click: ${link.effect}.`,
+        rootCause: 'The <a> tag has no real href destination, and clicking it triggers no JavaScript handler either — the control is genuinely dead.',
+        affectedArea: targetUrl,
+        recommendedAction: 'Add a valid href, or wire up the missing onClick/router handler for this element.',
+        evidenceFiles: []
+      });
+    }
+
+    const unverified = inventory.nonFunctionalLinks.filter(l => !testedIndexes.has(l.qaLinkIndex));
+    for (const link of unverified.slice(0, 10)) {
+      issues.push({
+        issue: 'Non-Functional Link (Unverified)',
+        category: 'non_functional_link_unverified',
+        linkLabel: cleanLabel(link.text),
+        severity: 'Medium',
+        evidence: `Link-styled element with text "${link.text}" — ${link.reason}.`,
+        rootCause: 'The <a> tag has no real href destination. Unless a JavaScript click handler provides equivalent navigation, clicking it does nothing.',
+        affectedArea: targetUrl,
+        recommendedAction: 'Add a valid href to the anchor, or confirm a working onClick/router handler is actually wired up — verify by clicking it manually in a browser.',
+        evidenceFiles: []
+      });
+    }
+  }
+
+  // 4c. Process Broken Links (Navigation Audit) — confirmed via a real HTTP error response
   if (auditArtifacts.linkAudit && auditArtifacts.linkAudit.brokenLinks) {
     for (const link of auditArtifacts.linkAudit.brokenLinks.slice(0, 10)) {
       issues.push({
         issue: `Broken Link (HTTP ${link.status || 0})`,
+        category: 'broken_link',
+        linkLabel: cleanLabel(link.anchorText),
         severity: link.status === 0 ? 'High' : (link.status >= 500 ? 'High' : 'Medium'),
         evidence: `Link "${link.anchorText || link.url}" resolved to "${link.url}" returning ${link.status === 0 ? link.statusText : `HTTP ${link.status} ${link.statusText}`}.`,
         rootCause: link.status === 0 ? 'Network/DNS failure resolving the link target.' : (link.status >= 500 ? 'Server-side error on the linked page.' : 'Linked page missing, moved, or access-restricted.'),
@@ -99,11 +172,30 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     }
   }
 
+  // 4c-i. Process Unverifiable Links — no HTTP response at all after 2 attempts. Ambiguous:
+  // could be a real problem, could just as easily be an unstable connection during testing.
+  if (auditArtifacts.linkAudit && auditArtifacts.linkAudit.unverifiableLinks) {
+    for (const link of auditArtifacts.linkAudit.unverifiableLinks.slice(0, 10)) {
+      issues.push({
+        issue: 'Link Could Not Be Verified',
+        category: 'unverifiable_link',
+        linkLabel: cleanLabel(link.anchorText),
+        severity: 'Low',
+        evidence: `Link "${link.anchorText || link.url}" resolved to "${link.url}" — ${link.statusText}`,
+        rootCause: 'No HTTP response was received after 2 attempts — this can indicate a broken link, or an unstable connection on the machine running this test.',
+        affectedArea: link.url,
+        recommendedAction: 'Re-run the audit on a more stable connection. If it still cannot be verified, check the link manually.',
+        evidenceFiles: []
+      });
+    }
+  }
+
   // 4c-ii. Process Access-Restricted Links (401/403 — informational, not broken)
   if (auditArtifacts.linkAudit && auditArtifacts.linkAudit.restrictedLinks) {
     for (const link of auditArtifacts.linkAudit.restrictedLinks.slice(0, 10)) {
       issues.push({
         issue: `Access-Restricted Link (HTTP ${link.status})`,
+        category: 'access_restricted_link',
         severity: 'Low',
         evidence: `Link "${link.anchorText || link.url}" resolved to "${link.url}" returning HTTP ${link.status} ${link.statusText}.`,
         rootCause: 'Page requires authentication/authorization; not a broken link, but unauthenticated crawlers and users without credentials cannot reach it.',
@@ -119,6 +211,7 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     for (const field of auditArtifacts.formAudit.missingLabels.slice(0, 10)) {
       issues.push({
         issue: 'Form Input Missing Label',
+        category: 'missing_label',
         severity: 'Low',
         evidence: `${field.element}${field.id ? ` id="${field.id}"` : ''}${field.name ? ` name="${field.name}"` : ''} has no accessible label.`,
         rootCause: field.details,
@@ -134,6 +227,8 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     for (const err of auditArtifacts.interactionAudit.errorsTriggered) {
       issues.push({
         issue: 'JavaScript Error Triggered by User Interaction',
+        category: 'js_error_interaction',
+        linkLabel: cleanLabel(err.element),
         severity: 'High',
         evidence: `Interacting with control "${err.element}" (${err.selector}) produced: ${err.details}`,
         rootCause: 'Frontend event handler threw an unhandled exception or triggered a failed network request during interaction.',
@@ -149,6 +244,8 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     for (const layout of auditArtifacts.responsiveAudit.layoutIssues) {
       issues.push({
         issue: `${layout.issue} (${layout.viewport})`,
+        category: 'layout_overflow',
+        viewportLabel: layout.viewport,
         severity: 'Low',
         evidence: layout.details,
         rootCause: 'CSS layout element width exceeds viewport dimensions without overflow containment.',
@@ -185,6 +282,10 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
 
   if (auditArtifacts.interactionAudit && auditArtifacts.interactionAudit.traceLogs) {
     auditArtifacts.interactionAudit.traceLogs.forEach(t => technicalExecutionDetails.push({ operation: 'Test Interactive Controls', trace: t }));
+  }
+
+  if (auditArtifacts.linkVerification && auditArtifacts.linkVerification.traceLogs) {
+    auditArtifacts.linkVerification.traceLogs.forEach(t => technicalExecutionDetails.push({ operation: 'Verify Non-Functional Links', trace: t }));
   }
 
   if (auditArtifacts.responsiveAudit && auditArtifacts.responsiveAudit.traceLogs) {
@@ -237,6 +338,14 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
     }
   });
 
+  // Attach a plain-English explanation to every issue, and one overall headline for the
+  // whole report — so the result is understandable without reading a single technical field.
+  issues.forEach(issue => {
+    issue.plainLanguage = explainIssue(issue);
+    issue.isUnverifiable = isUnverifiable(issue);
+  });
+  const plainSummary = buildPlainSummary(issues, !!preflight.connectionUncertain);
+
   // Count Statistics
   const testResults = (correlation && correlation.testResults) || [];
   const testsExecuted = testResults.length;
@@ -259,6 +368,7 @@ function generateQAReport(targetUrl, preflight, inventory = {}, correlation = {}
       skipped: skippedCount
     },
     rootCauseSummary: (correlation && correlation.rootCauseSummary) || (failedCount === 0 ? 'No critical root causes detected.' : 'Application issues detected.'),
+    plainSummary: plainSummary,
     issues: issues,
     blockedTests: testResults.filter(t => t.status === 'BLOCKED'),
     performance: {

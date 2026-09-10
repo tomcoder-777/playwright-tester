@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const { waitForHydration } = require('./hydration_wait');
 
 async function auditResponsiveLayout(page, targetUrl) {
   const startTime = Date.now();
@@ -24,6 +25,7 @@ async function auditResponsiveLayout(page, targetUrl) {
   try {
     await page.setViewportSize(config.viewports.desktop);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+    await waitForHydration(page);
     await page.waitForTimeout(300);
 
     const desktopLayout = await page.evaluate(() => {
@@ -59,6 +61,7 @@ async function auditResponsiveLayout(page, targetUrl) {
   try {
     await page.setViewportSize(config.viewports.mobile);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+    await waitForHydration(page);
     await page.waitForTimeout(300);
 
     const mobileLayout = await page.evaluate(() => {

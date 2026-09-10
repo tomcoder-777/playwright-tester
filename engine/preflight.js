@@ -21,7 +21,9 @@ async function runPreflight(page, targetUrl) {
     uncaughtExceptions: [],
     failedNetworkRequests: [],
     success: false,
-    errorMessage: null
+    errorMessage: null,
+    retried: false,
+    connectionUncertain: false
   };
 
   const redirectChain = [];
@@ -75,20 +77,36 @@ async function runPreflight(page, targetUrl) {
 
   const startTime = Date.now();
 
-  try {
-    // 2. Perform Resilient Navigation with domcontentloaded fallback strategy
-    let response = null;
+  // A single navigation attempt (the existing two-step domcontentloaded -> commit strategy).
+  // Throws if both steps fail — the caller below decides whether that's worth retrying.
+  async function attemptNavigation() {
     try {
-      response = await page.goto(targetUrl, {
+      return await page.goto(targetUrl, {
         waitUntil: config.navigationStrategy.waitUntil,
         timeout: config.timeouts.navigation
       });
     } catch (firstErr) {
       console.log(`[PREFLIGHT WARN] Primary navigation timed out, trying fallback: ${firstErr.message}`);
-      response = await page.goto(targetUrl, {
+      return await page.goto(targetUrl, {
         waitUntil: config.navigationStrategy.fallbackWaitUntil,
         timeout: config.timeouts.commitNavigation
       });
+    }
+  }
+
+  try {
+    // 2. Perform Resilient Navigation, retrying once on a total failure before concluding
+    // the site itself is down. A single timeout is ambiguous — it could be a genuinely dead
+    // site, or it could just as easily be a momentary blip on the network the test is running
+    // from. One retry after a short pause filters out that second, far more common case.
+    let response = null;
+    try {
+      response = await attemptNavigation();
+    } catch (firstAttemptErr) {
+      console.log(`[PREFLIGHT WARN] Navigation failed entirely, retrying once after a short pause: ${firstAttemptErr.message}`);
+      result.retried = true;
+      await new Promise(r => setTimeout(r, 1500));
+      response = await attemptNavigation();
     }
 
     const navigationDurationMs = Date.now() - startTime;
@@ -128,8 +146,23 @@ async function runPreflight(page, targetUrl) {
 
   } catch (err) {
     result.success = false;
-    result.errorMessage = `Preflight Navigation Failure: ${err.message}`;
     result.navigationDurationMs = Date.now() - startTime;
+
+    // A DNS "name not found" error means the domain itself doesn't resolve — that's a real,
+    // unambiguous problem with the target, not a connectivity blip. Everything else that
+    // still fails after a retry (timeouts, reset connections, "internet disconnected") is
+    // genuinely ambiguous — it could be the site being down, or it could be an unstable
+    // connection on the machine running this test. Say so honestly instead of guessing.
+    const isDefinitiveDnsFailure = /ERR_NAME_NOT_RESOLVED/i.test(err.message);
+    if (isDefinitiveDnsFailure) {
+      result.errorMessage = `The domain could not be found (DNS lookup failed): ${err.message}`;
+      result.connectionUncertain = false;
+    } else {
+      result.connectionUncertain = true;
+      result.errorMessage = result.retried
+        ? `Could not load the page even after retrying once: ${err.message}. This could mean the site is down, or that the internet connection running this test is unstable — the test alone can't tell which.`
+        : `Preflight Navigation Failure: ${err.message}`;
+    }
   } finally {
     page.off('request', requestListener);
     page.off('response', responseListener);

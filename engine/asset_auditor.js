@@ -15,6 +15,7 @@ async function auditAssets(requestContext, assets) {
     totalImages: 0,
     uniqueImagesCount: 0,
     brokenImages: [],
+    unverifiableImages: [],
     missingAltAccessibilityIssues: [],
     validImagesCount: 0,
     traceLogs: [],
@@ -57,24 +58,24 @@ async function auditAssets(requestContext, assets) {
   results.traceLogs.push(`Validate Image Assets — ${images.length} total image tags deduplicated to ${uniqueUrls.length} unique URLs`);
 
   // 3. Concurrent Worker Pool for Network Checks
+  // Only a real HTTP error response (4xx/5xx) counts as a confirmed broken image. A request
+  // that never got any response at all — timeout, connection reset — is retried once before
+  // being trusted, and even then it's logged separately as "couldn't verify" rather than
+  // asserted as broken, since that failure mode is just as likely to be the test's own
+  // network being unstable as it is to be a real problem with the image.
   async function auditSingleAsset(url) {
     const assetStart = Date.now();
     let status = 0;
     let methodUsed = 'HEAD';
     let isBroken = false;
+    let isUnverifiable = false;
     let errorDetail = '';
 
-    try {
-      // Step A: Attempt fast HEAD request
-      let response = await requestContext.fetch(url, {
-        method: 'HEAD',
-        timeout: timeout
-      });
+    async function attempt() {
+      let response = await requestContext.fetch(url, { method: 'HEAD', timeout: timeout });
+      let attemptStatus = response.status();
 
-      status = response.status();
-
-      // Step B: Resilient Fallback to GET if HEAD returns non-2xx/3xx or 405 Method Not Allowed
-      if (status >= 400 || status === 0) {
+      if (attemptStatus >= 400 || attemptStatus === 0) {
         if (config.assetAuditor && config.assetAuditor.fallbackToGet) {
           methodUsed = 'GET (Fallback)';
           response = await requestContext.fetch(url, {
@@ -82,37 +83,33 @@ async function auditAssets(requestContext, assets) {
             headers: { 'Range': 'bytes=0-1024' },
             timeout: timeout
           });
-          status = response.status();
+          attemptStatus = response.status();
         }
       }
+      return { response, attemptStatus };
+    }
 
-      if (status >= 400) {
-        isBroken = true;
-        errorDetail = `HTTP ${status} ${response.statusText()}`;
-      }
-    } catch (err) {
-      // Step C: Fallback to GET if HEAD threw an exception (e.g. CORS block / method rejected)
-      if (config.assetAuditor && config.assetAuditor.fallbackToGet && methodUsed === 'HEAD') {
-        try {
-          methodUsed = 'GET (Fallback)';
-          const response = await requestContext.fetch(url, {
-            method: 'GET',
-            headers: { 'Range': 'bytes=0-1024' },
-            timeout: timeout
-          });
-          status = response.status();
-          if (status >= 400) {
-            isBroken = true;
-            errorDetail = `HTTP ${status} ${response.statusText()}`;
-          }
-        } catch (getErr) {
+    let succeeded = false;
+    let lastNetworkError = null;
+    for (let attemptNum = 1; attemptNum <= 2 && !succeeded; attemptNum++) {
+      try {
+        const { response, attemptStatus } = await attempt();
+        status = attemptStatus;
+        succeeded = true;
+        if (status >= 400) {
           isBroken = true;
-          errorDetail = `Network fetch error: ${getErr.message}`;
+          errorDetail = `HTTP ${status} ${response.statusText()}`;
         }
-      } else {
-        isBroken = true;
-        errorDetail = `Network fetch error: ${err.message}`;
+      } catch (err) {
+        lastNetworkError = err;
+        methodUsed = 'HEAD';
+        if (attemptNum === 1) await new Promise(r => setTimeout(r, 500));
       }
+    }
+
+    if (!succeeded) {
+      isUnverifiable = true;
+      errorDetail = `Could not get a response after 2 attempts: ${lastNetworkError.message}`;
     }
 
     const elapsedMs = Date.now() - assetStart;
@@ -124,6 +121,12 @@ async function auditAssets(requestContext, assets) {
         issueType: 'BROKEN IMAGE',
         src: url,
         status: status,
+        details: errorDetail
+      });
+    } else if (isUnverifiable) {
+      results.unverifiableImages.push({
+        issueType: 'COULD NOT VERIFY',
+        src: url,
         details: errorDetail
       });
     } else {

@@ -177,6 +177,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Findings scraped from the audited page (link text, image paths, etc.) get interpolated
+  // into innerHTML below — escape it so a malicious page's content can't run script in the
+  // viewer's browser via the report.
+  const escapeHtml = (str) => String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  const renderIssueCard = (iss, idx) => {
+    const sevClass = `sev-${(iss.severity || 'low').toLowerCase()}`;
+    const plain = iss.plainLanguage || { summary: iss.issue, whyItMatters: '', whatToDo: '' };
+    const unverifiableClass = iss.isUnverifiable ? ' unverifiable' : '';
+    return `
+      <div class="plain-issue-card ${sevClass}${unverifiableClass}">
+        <div class="plain-issue-summary">
+          <span class="severity-pill ${sevClass}">${escapeHtml(iss.severity || '')}</span>${escapeHtml(plain.summary)}
+        </div>
+        <div class="plain-issue-body">
+          ${plain.whyItMatters ? `<p><strong>Why it matters:</strong> ${escapeHtml(plain.whyItMatters)}</p>` : ''}
+          ${plain.whatToDo ? `<p><strong>What to do:</strong> ${escapeHtml(plain.whatToDo)}</p>` : ''}
+        </div>
+        <details class="tech-details-box issue-tech-details">
+          <summary>Technical details (for developers)</summary>
+          <div class="tech-details-list">
+            <div class="tech-trace-line"><strong>Finding:</strong> ${escapeHtml(iss.issue)}</div>
+            <div class="tech-trace-line"><strong>Evidence:</strong> ${escapeHtml(iss.evidence)}</div>
+            <div class="tech-trace-line"><strong>Root cause:</strong> ${escapeHtml(iss.rootCause)}</div>
+            <div class="tech-trace-line"><strong>Affected area:</strong> ${escapeHtml(iss.affectedArea)}</div>
+          </div>
+        </details>
+      </div>
+    `;
+  };
+
   // Generator for Standardized Executive & Issue Report Cards
   const renderExecutiveReport = (targetUrl, success, output, qaReport) => {
     if (qaReport && qaReport.summary) {
@@ -187,19 +220,29 @@ document.addEventListener('DOMContentLoaded', () => {
       const breakdown = perf.breakdown || [];
       const budgetAlerts = perf.budgetAlerts || [];
       const techDetails = qaReport.technicalExecutionDetails || [];
+      const plainSummary = qaReport.plainSummary || { headline: `Status: ${statusStr}`, trafficLight: 'yellow' };
+
+      const confirmedIssues = issues.filter(i => !i.isUnverifiable);
+      const unverifiableIssues = issues.filter(i => i.isUnverifiable);
 
       let summaryHeader = `
+        <div class="plain-headline-card light-${plainSummary.trafficLight}">
+          ${escapeHtml(plainSummary.headline)}
+        </div>
         <div class="report-summary-card" style="border-color: var(--theme-color)">
           <div class="report-summary-text">
-            <h3>Black-Box QA Audit — Status: ${statusStr}</h3>
-            <p>Target Endpoint: <strong>${qaReport.targetUrl}</strong> | Pages Tested: ${summary.pagesTested} | Total Runtime: <strong>${perf.totalRuntimeSec || '0.0s'}</strong> | Navigation: <strong>${perf.navigationDurationSec || '0.0s'}</strong></p>
+            <h3>Website Tested: ${escapeHtml(qaReport.targetUrl)}</h3>
+            <p>Pages checked: ${summary.pagesTested} | Total time: <strong>${perf.totalRuntimeSec || '0.0s'}</strong> | Page load time: <strong>${perf.navigationDurationSec || '0.0s'}</strong></p>
           </div>
-          <div class="report-grade-badge">STATUS: ${statusStr}</div>
         </div>
       `;
 
+      if (plainSummary.connectionNote) {
+        summaryHeader += `<div class="plain-note-card">⚠️ ${escapeHtml(plainSummary.connectionNote)}</div>`;
+      }
+
       let issuesHtml = '';
-      if (issues.length === 0) {
+      if (confirmedIssues.length === 0) {
         issuesHtml = `
           <div class="report-checklist">
             <div class="check-item">
@@ -229,50 +272,49 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         `;
       } else {
-        issuesHtml = `<div class="report-checklist">` + issues.map((iss, idx) => `
-          <div class="check-item item-error">
-            <div class="check-item-info">
-              <h4>Issue ${idx + 1}: ${iss.issue} [Severity: ${iss.severity}]</h4>
-              <p><strong>Evidence:</strong> ${iss.evidence}</p>
-              <p style="margin-top: 0.2rem;"><strong>Root Cause:</strong> ${iss.rootCause}</p>
-              <p style="margin-top: 0.2rem;"><strong>Affected Area:</strong> <code>${iss.affectedArea}</code></p>
-              <p style="margin-top: 0.2rem;"><strong>Recommended Action:</strong> ${iss.recommendedAction}</p>
-            </div>
-          </div>
-        `).join('') + `</div>`;
+        issuesHtml = confirmedIssues.map(renderIssueCard).join('');
       }
 
-      // Render Performance Phase Breakdown Table
+      if (plainSummary.unverifiableNote) {
+        issuesHtml += `<div class="plain-note-card">ℹ️ ${escapeHtml(plainSummary.unverifiableNote)}</div>`;
+        issuesHtml += `<details class="tech-details-box"><summary>Show the ${unverifiableIssues.length} unverified item(s)</summary><div class="tech-details-list">` +
+          unverifiableIssues.map(renderIssueCard).join('') + `</div></details>`;
+      }
+
+      // Render Performance Phase Breakdown Table — tucked behind a toggle since raw phase
+      // timings are QA/developer detail, not something a non-technical reader needs up front.
       let perfHtml = '';
       if (breakdown.length > 0) {
         perfHtml = `
-          <div class="perf-table-container">
-            <h4>Audit Performance Phase Breakdown (Total: ${perf.totalRuntimeSec || '0.0s'})</h4>
-            <table class="perf-table">
-              <thead>
-                <tr>
-                  <th>Phase / Operation</th>
-                  <th>Duration</th>
-                  <th>Runtime %</th>
-                  <th>Visual Distribution</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${breakdown.map(p => `
+          <details class="tech-details-box">
+            <summary>Show performance details (Total: ${perf.totalRuntimeSec || '0.0s'})</summary>
+            <div class="perf-table-container">
+              <table class="perf-table">
+                <thead>
                   <tr>
-                    <td>${p.phaseName}</td>
-                    <td><strong>${p.durationSec}</strong> (${p.durationMs}ms)</td>
-                    <td>${p.percentage}%</td>
-                    <td style="width: 25%;">
-                      <div class="perf-bar-bg">
-                        <div class="perf-bar-fill" style="width: ${Math.min(100, Math.max(2, p.percentage))}%;"></div>
-                      </div>
-                    </td>
+                    <th>Phase / Operation</th>
+                    <th>Duration</th>
+                    <th>Runtime %</th>
+                    <th>Visual Distribution</th>
                   </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  ${breakdown.map(p => `
+                    <tr>
+                      <td>${p.phaseName}</td>
+                      <td><strong>${p.durationSec}</strong> (${p.durationMs}ms)</td>
+                      <td>${p.percentage}%</td>
+                      <td style="width: 25%;">
+                        <div class="perf-bar-bg">
+                          <div class="perf-bar-fill" style="width: ${Math.min(100, Math.max(2, p.percentage))}%;"></div>
+                        </div>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </details>
         `;
       }
 
@@ -340,11 +382,14 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
     } else {
+      // No qaReport means the audit process itself never got far enough to produce one —
+      // it's not safe to assume the target site is what failed. Point at the real
+      // diagnostic (Execution Logs) instead of guessing at a cause.
       return `
         <div class="report-summary-card" style="border-color: var(--theme-color)">
           <div class="report-summary-text">
-            <h3>Audit Failed — Assertion Error</h3>
-            <p>Target endpoint ${targetUrl} failed validation checks.</p>
+            <h3>Audit Could Not Complete</h3>
+            <p>The test for ${escapeHtml(targetUrl)} did not finish and produced no report.</p>
           </div>
           <div class="report-grade-badge">STATUS: ACTION REQUIRED</div>
         </div>
@@ -352,14 +397,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="report-checklist">
           <div class="check-item item-error">
             <div class="check-item-info">
-              <h4>Assertion Error: Request Failure</h4>
-              <p>Target: <strong>${targetUrl}</strong> — Endpoint timed out or returned a non-success status.</p>
+              <h4>The audit process itself failed to run</h4>
+              <p>This means something stopped the test before it could check <strong>${escapeHtml(targetUrl)}</strong> — it is not necessarily a problem with that site.</p>
             </div>
           </div>
           <div class="check-item">
             <div class="check-item-info">
-              <h4>Remediation Step</h4>
-              <p>Verify network availability, check server routing, and ensure endpoint URI is properly formatted.</p>
+              <h4>What to do</h4>
+              <p>Switch to the "Execution Logs" tab above to see the exact error.</p>
             </div>
           </div>
         </div>
@@ -462,6 +507,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const speedMatch = data.output.match(/Loaded in (\d+)ms/);
         const targetMs = speedMatch ? parseInt(speedMatch[1], 10) : (data.qaReport ? data.qaReport.performance.domContentLoadedMs : 400);
 
+        document.getElementById('speedUnit').style.display = '';
         scoreLinks.textContent = '100% Valid';
 
         if (typeof anime !== 'undefined') {
@@ -516,7 +562,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         scorecardSection.style.display = 'block';
         healthNum.textContent = '0';
-        speedNum.textContent = 'Alert';
+        document.getElementById('speedUnit').style.display = 'none';
+        speedNum.textContent = 'Issues found';
         scoreLinks.textContent = `${errorCount} Failed`;
 
         if (typeof anime !== 'undefined') {
