@@ -130,7 +130,17 @@ function startJob(job) {
   else if (job.testSuite === 'interactive') testFile = 'tests/03_interactive_elements.spec.js';
   else if (job.testSuite === 'visual') testFile = 'tests/04_responsive_and_visual.spec.js';
 
-  const slowMoFlag = job.slowMo ? '--headed' : '';
+  // "Headed" mode launches a real, visible browser window — that only works on a machine
+  // with an actual display. Hosted servers (Render, and most other platforms) are headless
+  // containers with no display at all, so honoring this on a host would crash the whole
+  // audit before it even starts. Render sets RENDER=true automatically; FORCE_HEADLESS lets
+  // any other headless host opt in explicitly. Session video recording already gives a
+  // visual record of what happened, so nothing is lost by ignoring the toggle here.
+  const isHeadlessOnlyHost = process.env.RENDER === 'true' || process.env.FORCE_HEADLESS === 'true';
+  if (job.slowMo && isHeadlessOnlyHost) {
+    console.log(`[INFO] [job ${job.id}] Ignoring "headed" request — this host has no display. Running headless (see the session video for a visual record).`);
+  }
+  const slowMoFlag = (job.slowMo && !isHeadlessOnlyHost) ? '--headed' : '';
   const command = `npx playwright test ${testFile} --project="Desktop Chrome" ${slowMoFlag}`;
   console.log(`[INFO] [job ${job.id}] Executing: TARGET_URL=${job.targetUrl} ${command}`);
 

@@ -383,11 +383,15 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
     } else {
+      // No qaReport means the audit process itself never got far enough to produce one —
+      // it's not safe to assume the target site is what failed. Common real causes: the
+      // "headed" browser toggle on a server with no display, or an unexpected crash in the
+      // test runner. Point at the real diagnostic (Execution Logs) instead of guessing.
       return `
         <div class="report-summary-card" style="border-color: var(--theme-color)">
           <div class="report-summary-text">
-            <h3>Audit Failed — Assertion Error</h3>
-            <p>Target endpoint ${targetUrl} failed validation checks.</p>
+            <h3>Audit Could Not Complete</h3>
+            <p>The test for ${escapeHtml(targetUrl)} did not finish and produced no report.</p>
           </div>
           <div class="report-grade-badge">STATUS: ACTION REQUIRED</div>
         </div>
@@ -395,14 +399,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="report-checklist">
           <div class="check-item item-error">
             <div class="check-item-info">
-              <h4>Assertion Error: Request Failure</h4>
-              <p>Target: <strong>${targetUrl}</strong> — Endpoint timed out or returned a non-success status.</p>
+              <h4>The audit process itself failed to run</h4>
+              <p>This means something stopped the test before it could check <strong>${escapeHtml(targetUrl)}</strong> — it is not necessarily a problem with that site. A common cause is running with "Headed Browser Execution Mode" enabled on a server with no display (that toggle only works when running locally on your own machine).</p>
             </div>
           </div>
           <div class="check-item">
             <div class="check-item-info">
-              <h4>Remediation Step</h4>
-              <p>Verify network availability, check server routing, and ensure endpoint URI is properly formatted.</p>
+              <h4>What to do</h4>
+              <p>Switch to the "Execution Logs" tab above to see the exact error, and make sure "Headed Browser Execution Mode" is turned off if this is a hosted deployment.</p>
             </div>
           </div>
         </div>
