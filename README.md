@@ -94,3 +94,80 @@ Open **[http://localhost:3005](http://localhost:3005)** in your browser.
 | `PORT` | `3005` | Port for Express dashboard server |
 | `TARGET_URL` | `https://example.com` | Target web application endpoint for CLI runs |
 | `HEADLESS` | `true` | Runs Playwright in headless browser mode |
+
+### Multi-User Hosting Hardening
+
+The dashboard runs a real browser per audit against a caller-supplied URL — hosting it for
+others requires the following, all configured via environment variables:
+
+| Variable | Default Value | Description |
+|---|---|---|
+| `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` | *(unset)* | Enables HTTP Basic Auth on the entire dashboard (UI + API). **If unset, the dashboard runs with no authentication at all** — a startup warning is logged; never expose it on a public domain in that state. |
+| `MAX_CONCURRENT_AUDITS` | `1` | How many audits run at once. Each audit is a real Chromium instance — keep this low unless the host has real headroom. |
+| `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | `5` / `600000` (10 min) | Max audits a single IP can start per time window. |
+| `QUEUE_MAX` | `10` | Hard cap on jobs queued + running at once; further requests get `429` until it drains. |
+| `MAX_RETAINED_RUNS` | `20` | Oldest completed run directories (`runs/<jobId>/`) are pruned beyond this count. |
+| `TRUST_PROXY` | `false` | Set to `true` only when a real reverse proxy (nginx/Caddy) sits in front and sets `X-Forwarded-For` — otherwise rate limiting can be trivially bypassed by spoofing that header. |
+
+Every target URL is also checked by `engine/ssrf_guard.js` before any navigation happens: only
+`http`/`https` are allowed, and both the literal hostname and its resolved DNS addresses are
+rejected if they fall in a private/loopback/link-local range (including cloud metadata
+addresses like `169.254.169.254`) — this is what stops the tool's own server from being used
+as an SSRF proxy into its host's internal network.
+
+---
+
+## Pushing to GitHub
+
+```bash
+git add -A
+git commit -m "Your commit message"
+git push origin master
+```
+
+That's it if a remote is already configured (`git remote -v` shows one). If not, create an
+empty repository on GitHub first, then:
+
+```bash
+git remote add origin https://github.com/<your-username>/<repo-name>.git
+git push -u origin master
+```
+
+---
+
+## Deploying to Render.com (Free)
+
+This app is a long-running Node/Express server that launches a real headless browser per
+audit — it needs a host that runs a persistent process, not a serverless-functions platform
+(Vercel, Netlify Functions). Render's free web-service tier fits: no card required, no expiry,
+built from the `Dockerfile` in this repo (which is based on Playwright's own image, so Chromium
+and all its OS-level dependencies come preinstalled — no extra setup needed). The trade-off is
+that a free instance spins down after 15 minutes of no traffic and takes roughly 30-60 seconds
+to wake back up on the next request.
+
+1. **Push this repo to GitHub** (see the section above) — Render deploys from a Git repo, not
+   from local files.
+2. On [render.com](https://render.com), sign up/log in, then click **New +** → **Web Service**.
+3. Connect your GitHub account and select this repository.
+4. Render should auto-detect the `Dockerfile` and set the **Environment** to `Docker`. Leave
+   the build/start commands blank — the `Dockerfile` already defines them.
+5. Pick the **Free** instance type.
+6. Under **Environment Variables**, add at minimum:
+   - `TRUST_PROXY` = `true` (Render sits behind its own proxy — without this, rate limiting
+     would see Render's IP instead of each real visitor's)
+   - `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` — **set these before sharing the URL with
+     anyone.** Without them the dashboard has no login at all.
+7. Click **Create Web Service**. The first build takes several minutes (it's pulling a multi-GB
+   base image with browsers preinstalled) — watch the build logs in the Render dashboard.
+8. Once live, Render gives you a URL like `https://web-auditor-pro.onrender.com`. That's your
+   public link — share it with the username/password you set in step 6.
+
+Prefer one click instead of the manual form? This repo also includes a `render.yaml` — on
+Render, use **New +** → **Blueprint** and point it at this repo instead of step 2-6 above; it
+configures the same settings automatically (you'll still be prompted to fill in the username/
+password, since those are intentionally excluded from the file).
+
+Each audit runs in an isolated `runs/<jobId>/` directory (screenshots, Playwright HTML report,
+video) so concurrent audits from different users never overwrite each other's output — this
+replaced an earlier version that reused one shared `snapshots/`/`test-results/` folder per
+request.

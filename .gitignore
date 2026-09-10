@@ -13,6 +13,9 @@ playwright/.cache/
 snapshots/*.png
 snapshots/*.json
 
+# Per-job dashboard run artifacts (isolated audit output directories)
+runs/
+
 # Logs & temp files
 *.log
 .DS_Store

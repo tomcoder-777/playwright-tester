@@ -1,0 +1,7 @@
+node_modules/
+.git/
+runs/
+test-results/
+playwright-report/
+snapshots/
+*.log

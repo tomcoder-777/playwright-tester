@@ -1,0 +1,23 @@
+# Optional: lets Render create the service automatically from this file ("New +" -> "Blueprint")
+# instead of clicking through the manual "New Web Service" form. Either approach works — see
+# the README for the manual steps too.
+services:
+  - type: web
+    name: web-auditor-pro
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /
+    envVars:
+      # Render sits behind its own proxy — without this, rate limiting would see Render's
+      # proxy IP for every visitor instead of their real IP, making the limit meaningless.
+      - key: TRUST_PROXY
+        value: "true"
+      - key: MAX_CONCURRENT_AUDITS
+        value: "1"
+      # Prompted for in the Render dashboard rather than stored in this file — set these to
+      # protect the dashboard before making the URL public. See the README for details.
+      - key: DASHBOARD_USERNAME
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false

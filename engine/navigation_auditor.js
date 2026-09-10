@@ -18,6 +18,7 @@ async function auditLinksFast(requestContext, discoveredPages, targetUrl) {
     validLinks: 0,
     brokenLinks: [],
     restrictedLinks: [],
+    unverifiableLinks: [],
     redirects: [],
     traceLogs: [],
     durationMs: 0
@@ -38,21 +39,40 @@ async function auditLinksFast(requestContext, discoveredPages, targetUrl) {
   results.traceLogs.push(`Validate Internal Links — ${discoveredPages.length} discovered pages deduplicated to ${sampledItems.length} unique audit targets`);
 
   // 2. Concurrent Worker Pool
+  // A request that gets a real HTTP response (even an error one, like 404) is a confirmed
+  // fact about the target. A request that times out or the connection resets got NO response
+  // at all — that's just as likely to be a momentary network blip on our end as a real
+  // problem with the link, so it's retried once before being trusted, and even then it's
+  // tracked separately as "couldn't verify" rather than asserted as broken.
+  async function fetchOnce(url) {
+    return requestContext.fetch(url, { method: 'GET', maxRedirects: 5, timeout: timeout });
+  }
+
   async function checkLink(item) {
     const linkStart = Date.now();
     const url = item.url;
     results.totalAudited++;
 
-    try {
-      const response = await requestContext.fetch(url, {
-        method: 'GET',
-        maxRedirects: 5,
-        timeout: timeout
-      });
+    let response = null;
+    let networkError = null;
+    let attempts = 0;
 
+    for (attempts = 1; attempts <= 2; attempts++) {
+      try {
+        response = await fetchOnce(url);
+        networkError = null;
+        break;
+      } catch (err) {
+        networkError = err;
+        if (attempts === 1) await new Promise(r => setTimeout(r, 500));
+      }
+    }
+
+    const elapsedSec = ((Date.now() - linkStart) / 1000).toFixed(2);
+
+    if (response) {
       const status = response.status();
-      const elapsedSec = ((Date.now() - linkStart) / 1000).toFixed(2);
-      results.traceLogs.push(`GET "${url}" — status ${status} — ${elapsedSec}s`);
+      results.traceLogs.push(`GET "${url}" — status ${status} — ${elapsedSec}s${attempts > 1 ? ' (succeeded on retry)' : ''}`);
 
       if (status === 401 || status === 403) {
         // Access-gated, not actually dead: a real visitor gets an auth prompt/permission
@@ -80,13 +100,13 @@ async function auditLinksFast(requestContext, discoveredPages, targetUrl) {
           });
         }
       }
-    } catch (err) {
-      const elapsedSec = ((Date.now() - linkStart) / 1000).toFixed(2);
-      results.traceLogs.push(`GET "${url}" — ERROR ${err.message} — ${elapsedSec}s`);
-      results.brokenLinks.push({
+    } else {
+      // Both attempts failed with no HTTP response at all — genuinely can't tell whether
+      // the link is broken or the test's own connection is unstable right now.
+      results.traceLogs.push(`GET "${url}" — ERROR ${networkError.message} (after retry) — ${elapsedSec}s`);
+      results.unverifiableLinks.push({
         url: url,
-        status: 0,
-        statusText: `Network Connection Error: ${err.message}`,
+        statusText: `Could not get a response after 2 attempts: ${networkError.message}`,
         anchorText: item.text
       });
     }

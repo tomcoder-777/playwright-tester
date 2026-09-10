@@ -5,6 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const { waitForHydration } = require('./hydration_wait');
+const { getSnapshotDir, getSnapshotUrlPrefix } = require('./paths');
 
 async function auditResponsiveLayout(page, targetUrl) {
   const startTime = Date.now();
@@ -17,13 +19,15 @@ async function auditResponsiveLayout(page, targetUrl) {
     durationMs: 0
   };
 
-  const snapshotDir = path.join(__dirname, '..', 'snapshots');
+  const snapshotDir = getSnapshotDir();
+  const urlPrefix = getSnapshotUrlPrefix();
   if (!fs.existsSync(snapshotDir)) fs.mkdirSync(snapshotDir, { recursive: true });
 
   // 1. Audit Desktop Viewport (1440px)
   try {
     await page.setViewportSize(config.viewports.desktop);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+    await waitForHydration(page);
     await page.waitForTimeout(300);
 
     const desktopLayout = await page.evaluate(() => {
@@ -49,7 +53,7 @@ async function auditResponsiveLayout(page, targetUrl) {
 
     const desktopSnapshotPath = path.join(snapshotDir, 'desktop_view.png');
     await page.screenshot({ path: desktopSnapshotPath, fullPage: true });
-    results.desktop.snapshotPath = '/snapshots/desktop_view.png';
+    results.desktop.snapshotPath = `${urlPrefix}/desktop_view.png`;
 
   } catch (err) {
     console.log(`[RESPONSIVE WARN] Desktop audit warning: ${err.message}`);
@@ -59,6 +63,7 @@ async function auditResponsiveLayout(page, targetUrl) {
   try {
     await page.setViewportSize(config.viewports.mobile);
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: config.timeouts.navigation });
+    await waitForHydration(page);
     await page.waitForTimeout(300);
 
     const mobileLayout = await page.evaluate(() => {
@@ -84,7 +89,7 @@ async function auditResponsiveLayout(page, targetUrl) {
 
     const mobileSnapshotPath = path.join(snapshotDir, 'mobile_view.png');
     await page.screenshot({ path: mobileSnapshotPath, fullPage: true });
-    results.mobile.snapshotPath = '/snapshots/mobile_view.png';
+    results.mobile.snapshotPath = `${urlPrefix}/mobile_view.png`;
 
   } catch (err) {
     console.log(`[RESPONSIVE WARN] Mobile audit warning: ${err.message}`);
